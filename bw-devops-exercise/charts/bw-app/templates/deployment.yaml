@@ -1,0 +1,36 @@
+apiversion: apps/v1
+kind: Deployment
+metadata:
+    name: bw-devops-excercise-app
+    namespace: {{ .Release.Namespace }}
+spec:
+    replicas: {{ .Values.app.replicas }}
+    selector:
+        matchLabels:
+            app: bw-devops-excercise-app
+            role: web
+    template:
+        metadata:
+            labels:
+                app: bw-devops-excercise-app
+                role: web
+        spec:
+            securityContext:
+                runAsGroup: 1000
+                runAsUser: 1000
+            containers:
+                - name: {{ .Release.Name }}-app
+                  image: {{ .Values.app.image }}:{{ .Values.app.tag }}
+                  args:
+                    {{- range .Values.app.args }}
+                    - {{ quote . }}
+                    {{- end }}
+                  ports:
+                    - name: uvicorn
+                      containerPort: 8080
+                    resources: {{ toYaml .Values.app.resources | nindent 12 }}
+                    readinessProbe:
+                        initialDelaySeconds: 10
+                        httpGet:
+                            path: /
+                            port: 8080
