@@ -1,0 +1,96 @@
+name: Docker publish and tag on merge to main
+
+on:
+  pull_request:
+    branches:
+    - main
+    types: [closed]
+
+jobs:
+  build-image:
+    if: github.event.pull_request.merged == true
+    name: Build Docker Image
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${ github.ref_name#refs/tags/ }
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        
+    - uses: dorny/paths-filter@v2
+      id: filter
+      with:
+        filters: |
+          version:
+            - 'version.json'
+
+    - uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    - name: Install dependencies
+      run: |
+        pip install pipenv
+        pipenv install --deploy
+        pipenv install --dev --deploy
+
+    - name: Get major version num from version.json
+      run: |
+        echo 'VERSION_JSON<<EOF' >> $GITHUB_ENV
+        cat ./package.json >> $GITHUB_ENV
+        echo 'EOF' >> $GITHUB_ENV
+    
+    - name: Get latest tag
+      id: previoustag
+      uses: "WyriHaximus/github-action-get-previous-tag@v1"
+      with:
+        fallback: join('[fromJson(env.VERSION_JSON).baseVersion, 0]', '.')
+
+    - name: Get next minor version
+      id: semvers
+      uses: "WyriHaximus/github-action-next-semvers@v1"
+      with:
+        version: ${{ steps.previoustag.outputs.tag }}
+      
+    - name: set-next-patch-version
+      if: steps.filter.outputs.version == 'false'
+      run: |
+        NEW_VERSION=${{ steps.outputs.semvers.outputs.patch}}
+        IMAGE_NAME=bw-devops-exercise:${env.NEW_VERSION}
+        echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+    
+    - name: set-next-minor-version
+      if: steps.filter.outputs.version == 'true'
+      run: |
+        NEW_VERSION=${{ steps.outputs.semvers.outputs.minor}}
+        IMAGE_NAME=bw-devops-exercise:${env.NEW_VERSION}
+        echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+
+    - name: Build Docker Image
+      run: |
+        docker -t ${ env.IMAGE_NAME } .
+
+    - name: Push Docker Image to image repo
+      run: |
+        docker push ghcr.io/JoseVillarreal/${ env.IMAGE_NAME }
+
+    - name: Create Github Tag
+      run: |
+        git tag ${env.NEW_VERSION}
+
+    - name: Update docker image tag
+      run: |
+        docker tag ${env.NEW_VERSION} JoseVillarreal/bw-devops-exercise:latest 
+
+    - name: Create Github Release
+      env:
+        GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        tag: ${{ env.NEW_VERSION }}
+      run: |
+        gh release create "$tag" \
+          --repo="${github.ref_name}" \
+          --title="${github.ref_name} ${tag#v}" \
+          --notes="Releasing ${env.NEW_VERSION}" \
+          --generate-notes
+    
